@@ -1,8 +1,12 @@
 import sys, os, pickle
 from datetime import datetime as dt
 from PyQt4 import QtGui, QtCore, uic
-from patient import Patient, Session
+from patient import Patient
 from patient_category import PatientCategory
+from session import Session
+import matplotlib
+matplotlib.use('Qt4Agg')
+import matplotlib.pyplot as plt
 
 ui_file = '/home/ben/PycharmProjects/DadsResearch/main_form.ui'
 form, base = uic.loadUiType(ui_file)
@@ -155,8 +159,8 @@ class MainWindow(QtGui.QMainWindow):
             self.divergence_score.setText(str(self.current_patient.divergence_percentage))
             self.number_of_sessions.setText(str(len(self.current_patient.sessions)))
         elif type(self.current_patient) == PatientCategory:
-            self.convergence_score.setText('..')
-            self.divergence_score.setText('..')
+            self.convergence_score.setText(str(self.current_patient.average_con()))
+            self.divergence_score.setText(str(self.current_patient.average_div()))
             self.number_of_sessions.setText('..')
 
     def del_patient_clicked(self):
@@ -180,15 +184,23 @@ class MainWindow(QtGui.QMainWindow):
                 QtGui.QMessageBox.about(self, 'Error', 'Name already exists!')
             else:
                 new_patient = Patient(str(text))
+        else:
+            return
         text, ok = QtGui.QInputDialog.getInt(self, '', 'Enter patient age:')
         if ok:
             new_patient.age = int(text)
+        else:
+            return
         text, ok = QtGui.QInputDialog.getText(self, '', 'Enter patient diagnosis:')
         if ok:
             new_patient.diagnosis = str(text)
+        else:
+            return
         text, ok = QtGui.QInputDialog.getItem(self, '', 'Enter patient gender:', ['Female', 'Male', 'Other'])
         if ok:
             new_patient.gender = str(text)
+        else:
+            return
         pickle.dump(new_patient, open(new_file_name, 'wb'))
         self.update_patient_list()
 
@@ -215,16 +227,72 @@ class MainWindow(QtGui.QMainWindow):
             self.current_patient.view_time_graph()
 
     def freq_bar_clicked(self):
-        pass
+        if not self.current_patient:
+            QtGui.QMessageBox.about(self, 'Error', 'Pick a Patient!')
+        all_sessions = []
+        freq_voltages = ''.join(self.freq_line_edit.text().split(' ')).split(',')
+        freq_voltages = [float(v) for v in freq_voltages]
+        print(self.current_patient.name)
+        print(self.current_patient.sessions[0].freq_bc_scores, freq_voltages)
+        if type(self.current_patient) == Patient:
+            all_sessions = [s for s in self.current_patient.sessions if s.frequency_voltages == freq_voltages]
+        else:
+            for p in self.current_patient.patients:
+                all_sessions += [s for s in p.sessions if s.frequency_voltages == freq_voltages]
+        if not all_sessions:
+            QtGui.QMessageBox.about(self, 'Error', 'No sessions that match these frequencies were found!')
+        bc_counts = [0 for entry in freq_voltages]
+        time_count = 0
+        for s in all_sessions:
+            time_count += s.time
+            for i, perc in enumerate(s.freq_bc_scores):
+                bc_counts[i] += perc * s.time
+        bc_percentages = [(count/time_count) * 100 for count in bc_counts]
+        plt.figure()
+        plt.title('CONVERGENCE SCORE FOR DIFFERENT FREQUENCIES')
+        plt.bar(range(len(freq_voltages)), bc_percentages)
+        plt.show()
 
     def freq_table_clicked(self):
-        pass
+        if not self.current_patient:
+            QtGui.QMessageBox.about(self, 'Error', 'Pick a Patient!')
+        all_sessions = []
+        freq_voltages = ''.join(self.freq_line_edit.split(' ')).split(',')
+        freq_voltages = [float(v) for v in freq_voltages]
+        if type(self.current_patient) == Patient:
+            all_sessions = [s for s in self.current_patient.sessions if len(s.freq_bc_scores) == len(freq_voltages)]
+        else:
+            for p in self.current_patient.patients:
+                all_sessions += [s for s in p.sessions if len(s.freq_bc_scores) == len(freq_voltages)]
+        if not all_sessions:
+            QtGui.QMessageBox.about(self, 'Error', 'No sessions that match these frequencies were found!')
+        bc_counts = [0 for entry in freq_voltages]
+        time_count = 0
+        for s in all_sessions:
+            time_count += s.time
+            for i, perc in enumerate(s.freq_bc_scores):
+                bc_counts[i] += perc * s.time
+        bc_percentages = [(count/time_count)*100 for count in bc_counts]
 
     def phase_bar_clicked(self):
-        pass
+        if not self.current_patient:
+            QtGui.QMessageBox.about(self, 'Error', 'Pick a Patient!')
+        all_sessions = []
+        if type(self.current_patient) == Patient:
+            all_sessions = self.current_patient.sessions
+        else:
+            for p in self.current_patient.patients:
+                all_sessions += p.sessions
 
     def phase_table_clicked(self):
-        pass
+        if not self.current_patient:
+            QtGui.QMessageBox.about(self, 'Error', 'Pick a Patient!')
+        all_sessions = []
+        if type(self.current_patient) == Patient:
+            all_sessions = self.current_patient.sessions
+        else:
+            for p in self.current_patient.patients:
+                all_sessions += p.sessions
 
 
 class PatientTable(QtGui.QWidget):
@@ -242,8 +310,15 @@ class PatientTable(QtGui.QWidget):
         self._button.clicked.connect(self.create_cat_from_selected_patients)
 
     def create_cat_from_selected_patients(self):
-        patient_names = [item.text() for item in self._table.selectedItems()]
-        patients = [load_patient_or_cat(name) for name in patient_names]
+        patients = []
+        for item in self._table.selectedItems():
+            p_name = item.text()
+            p = load_patient_or_cat(p_name)
+            if not type(p) == PatientCategory:
+                patients.append(p)
+            else:
+                new_patients = [pat for pat in p.patients if pat not in patients]
+                patients += new_patients
         new_cat = PatientCategory(patients, self._new_cat_name)
         save_patient_or_cat(new_cat)
         self.close2()
@@ -258,6 +333,7 @@ class PatientTable(QtGui.QWidget):
     def close2(self):
         self.closing.emit()
         self.close()
+
 
 def main():
     app = QtGui.QApplication(sys.argv)
